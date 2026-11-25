@@ -1,0 +1,133 @@
+name: Integração dos microsserviços
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  docker-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validar configuração do Compose
+        run: docker compose config --quiet
+      - name: Subir os quatro contêineres
+        run: docker compose up --build -d
+      - name: Aguardar Gateway e testar fluxo completo
+        run: |
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8000/saude >/dev/null; then break; fi
+            sleep 2
+          done
+          python - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8000"
+
+          def request(method, path, token=None, payload=None):
+              headers = {"Content-Type": "application/json"}
+              if token:
+                  headers["Authorization"] = "Bearer " + token
+              body = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=8) as response:
+                      raw = response.read()
+                      return response.status, json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read()
+                  try:
+                      data = json.loads(raw) if raw else {}
+                  except ValueError:
+                      data = {}
+                  return exc.code, data
+
+          def login(email):
+              status, data = request("POST", "/auth/login", payload={"email": email, "senha": "Helpdesk2026"})
+              assert status == 200, (status, data)
+              return data["access_token"]
+
+          status, health = request("GET", "/saude")
+          assert status == 200 and health["status"] == "ok", health
+          status, _ = request("GET", "/chamados")
+          assert status == 401, status
+
+          carla = login("carla@empresa.com")
+          ana = login("ana@empresa.com")
+
+          # A abertura valida o ativo por HTTP no serviço Inventário.
+          status, ticket = request("POST", "/chamados", carla, {
+              "titulo": "Teste de integração",
+              "descricao": "Chamado criado no pipeline de integração.",
+              "prioridade": "alta",
+              "ativo_id": 1
+          })
+          assert status == 201, (status, ticket)
+          ticket_id = ticket["id"]
+
+          # A atribuição consulta o técnico por HTTP no serviço Usuários.
+          status, assigned = request("PATCH", f"/chamados/{ticket_id}/atribuir", carla, {"tecnico_id": 4})
+          assert status == 200 and assigned["status"] == "em_atendimento", (status, assigned)
+          status, resolved = request("PATCH", f"/chamados/{ticket_id}/status", carla, {"status": "resolvido"})
+          assert status == 200 and resolved["status"] == "resolvido", (status, resolved)
+          status, closed = request("PATCH", f"/chamados/{ticket_id}/status", carla, {"status": "fechado"})
+          assert status == 200 and closed["status"] == "fechado", (status, closed)
+
+          # Solicitante não pode consultar chamado de outra pessoa.
+          status, _ = request("GET", f"/chamados/{ticket_id}", ana)
+          assert status == 404, status
+          print("Fluxo autenticado, chamadas HTTP entre serviços e permissões: OK")
+          PY
+      - name: Parar Inventário e verificar degradação controlada
+        run: |
+          docker compose stop inventario
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8000"
+          def get(path, token):
+              req = urllib.request.Request(BASE + path, headers={"Authorization": "Bearer " + token})
+              try:
+                  with urllib.request.urlopen(req, timeout=8) as response:
+                      return response.status, response.read()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read()
+
+          def post_ticket(token):
+              body = json.dumps({
+                  "titulo": "Dependência indisponível",
+                  "descricao": "Teste de timeout/503 do Inventário.",
+                  "prioridade": "baixa",
+                  "ativo_id": 1
+              }).encode()
+              req = urllib.request.Request(BASE + "/chamados", data=body,
+                  headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}, method="POST")
+              try:
+                  with urllib.request.urlopen(req, timeout=8) as response:
+                      return response.status, response.read()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read()
+
+          body = json.dumps({"email": "carla@empresa.com", "senha": "Helpdesk2026"}).encode()
+          req = urllib.request.Request(BASE + "/auth/login", data=body, headers={"Content-Type": "application/json"}, method="POST")
+          with urllib.request.urlopen(req, timeout=8) as response:
+              token = json.loads(response.read())["access_token"]
+          assert get("/usuarios", token)[0] == 200
+          assert get("/chamados", token)[0] == 200
+          status, body = post_ticket(token)
+          assert status == 503, (status, body)
+          print("Usuários e Chamados continuam disponíveis; Inventário indisponível resulta em HTTP 503: OK")
+          PY
+      - name: Restaurar Inventário e desligar ambiente
+        if: always()
+        run: |
+          docker compose start inventario || true
+          docker compose down -v
