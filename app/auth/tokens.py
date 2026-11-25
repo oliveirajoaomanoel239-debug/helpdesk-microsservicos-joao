@@ -1,4 +1,4 @@
-"""Criação e validação dos tokens JWT."""
+"""Criação e validação dos tokens JWT compartilhados pelos serviços."""
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -17,13 +17,22 @@ def criar(usuario_id: int, perfil: str) -> tuple[str, datetime]:
     return jwt.encode(dados, JWT_SEGREDO, algorithm=JWT_ALGORITMO), expira
 
 
-def ler(token: str) -> int:
-    """Devolve o id do usuário do token, ou lança TokenInvalido."""
+def ler_dados(token: str) -> dict:
+    """Valida assinatura, emissor e expiração; retorna claims mínimos."""
     try:
         dados = jwt.decode(
             token, JWT_SEGREDO, algorithms=[JWT_ALGORITMO], issuer=JWT_EMISSOR,
-            options={"require": ["exp", "iat", "sub", "iss"]},
+            options={"require": ["exp", "iat", "sub", "iss", "perfil"]},
         )
-        return int(dados["sub"])
-    except (jwt.PyJWTError, ValueError) as erro:
+        usuario_id = int(dados["sub"])
+        perfil = dados["perfil"]
+        if usuario_id <= 0 or perfil not in {"solicitante", "tecnico", "admin"}:
+            raise ValueError("claims inválidos")
+        return {"id": usuario_id, "perfil": perfil}
+    except (jwt.PyJWTError, ValueError, TypeError, KeyError) as erro:
         raise TokenInvalido() from erro
+
+
+def ler(token: str) -> int:
+    """Compatibilidade: devolve somente o id do usuário."""
+    return ler_dados(token)["id"]
