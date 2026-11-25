@@ -1,22 +1,94 @@
 services:
-  helpdesk:
+  usuarios:
     build: .
-    ports:
-      - "127.0.0.1:8000:8000"   # só acessível pelo próprio computador
-    env_file:
-      - path: .env
-        required: false
+    command: ["uvicorn", "services.usuarios.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
+      DATABASE_URL: sqlite:////data/usuarios.db
+      JWT_SEGREDO: ${JWT_SEGREDO:-desenvolvimento-local-troque-esta-chave-por-uma-chave-forte-2026}
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      SENHA_EXEMPLO: ${SENHA_EXEMPLO:-Helpdesk2026}
+    volumes:
+      - usuarios_db:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  inventario:
+    build: .
+    command: ["uvicorn", "services.inventario.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: sqlite:////data/inventario.db
+      JWT_SEGREDO: ${JWT_SEGREDO:-desenvolvimento-local-troque-esta-chave-por-uma-chave-forte-2026}
       DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
     volumes:
-      - dados:/dados
+      - inventario_db:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  chamados:
+    build: .
+    command: ["uvicorn", "services.chamados.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: sqlite:////data/chamados.db
+      JWT_SEGREDO: ${JWT_SEGREDO:-desenvolvimento-local-troque-esta-chave-por-uma-chave-forte-2026}
+      URL_USUARIOS: http://usuarios:8000
+      URL_INVENTARIO: http://inventario:8000
+    volumes:
+      - chamados_db:/data
+    depends_on:
+      usuarios:
+        condition: service_healthy
+      inventario:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  gateway:
+    build: .
+    command: ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      URL_USUARIOS: http://usuarios:8000
+      URL_INVENTARIO: http://inventario:8000
+      URL_CHAMADOS: http://chamados:8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      usuarios:
+        condition: service_healthy
+      inventario:
+        condition: service_healthy
+      chamados:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
 
 volumes:
-  dados:
+  usuarios_db:
+  inventario_db:
+  chamados_db:
