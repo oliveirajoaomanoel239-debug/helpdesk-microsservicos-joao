@@ -5,6 +5,8 @@ Os módulos ficam em pastas separadas e conversam pela porta pública
 de cada um (`servico.py`).
 """
 import os
+# Esta entrada mantém o modo monolítico para a suíte de regressão original.
+os.environ.setdefault("MODO_MONOLITO", "1")
 from contextlib import asynccontextmanager
 from pathlib import Path
 
