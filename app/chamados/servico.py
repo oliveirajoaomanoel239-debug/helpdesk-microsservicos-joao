@@ -55,7 +55,7 @@ def _consultar_servico(base: str, caminho: str, authorization: str) -> dict:
 
 
 def _validar_ativo(db: Session, ativo_id: int, authorization: str | None):
-    if authorization:
+    if authorization and os.getenv("MODO_MONOLITO") != "1":
         base = os.getenv("URL_INVENTARIO", "http://inventario:8000")
         return _consultar_servico(base, f"ativos/{ativo_id}", authorization)
     # Compatibilidade com os testes e execução do monólito original.
@@ -64,7 +64,7 @@ def _validar_ativo(db: Session, ativo_id: int, authorization: str | None):
 
 
 def _validar_tecnico(db: Session, tecnico_id: int, authorization: str | None):
-    if authorization:
+    if authorization and os.getenv("MODO_MONOLITO") != "1":
         base = os.getenv("URL_USUARIOS", "http://usuarios:8000")
         tecnico = _consultar_servico(base, f"usuarios/{tecnico_id}", authorization)
         if tecnico.get("perfil") != "tecnico":
