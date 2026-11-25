@@ -39,7 +39,7 @@ def _consultar_servico(base: str, caminho: str, authorization: str) -> dict:
             headers={"Authorization": authorization},
             timeout=httpx.Timeout(2.5, connect=1.5),
         )
-    except (httpx.TimeoutException, httpx.ConnectError):
+    except httpx.HTTPError:
         raise HTTPException(
             status_code=503,
             detail="Serviço dependente indisponível. Tente novamente em instantes.",
