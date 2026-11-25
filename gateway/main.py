@@ -6,6 +6,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from app.seguranca_http import CabecalhosDeSeguranca
+
 WEB = Path(__file__).resolve().parents[1] / "app" / "web"
 SERVICOS = {
     "usuarios": os.getenv("URL_USUARIOS", "http://usuarios:8000"),
@@ -13,6 +15,7 @@ SERVICOS = {
     "chamados": os.getenv("URL_CHAMADOS", "http://chamados:8000"),
 }
 app = FastAPI(title="HelpDesk — API Gateway", version="3.0.0", docs_url=None, redoc_url=None)
+app.add_middleware(CabecalhosDeSeguranca)
 
 
 @app.get("/", include_in_schema=False)
@@ -67,7 +70,7 @@ async def encaminhar(path: str, request: Request):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=2.0)) as client:
             upstream = await client.request(request.method, url, content=await request.body(), headers=headers)
-    except (httpx.TimeoutException, httpx.ConnectError):
+    except httpx.HTTPError:
         return JSONResponse(status_code=503, content={
             "detail": "Serviço temporariamente indisponível. Tente novamente em instantes."
         })
